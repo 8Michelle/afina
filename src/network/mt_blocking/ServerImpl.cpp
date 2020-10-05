@@ -161,8 +161,6 @@ void ServerImpl::OnRun() {
     _logger->warn("Network stopped");
 }
 
-
-
 void ServerImpl::ConnectionHandler(int client_socket) {
     _logger->info("client thread {} started", client_socket);
     std::unique_ptr<Execute::Command> command_to_execute;
