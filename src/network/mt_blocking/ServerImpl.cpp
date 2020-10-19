@@ -20,6 +20,7 @@
 #include <afina/Storage.h>
 #include <afina/execute/Command.h>
 #include <afina/logging/Service.h>
+#include <afina/concurrency/Executor.h>
 
 #include "protocol/Parser.h"
 #include <mutex>
@@ -115,6 +116,7 @@ void ServerImpl::OnRun() {
 
         // The call to accept() blocks until the incoming connection arrives
         int client_socket;
+        Afina::Concurrency::Executor executor("Clients");
         struct sockaddr client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
         if ((client_socket = accept(_server_socket, (struct sockaddr *)&client_addr, &client_addr_len)) == -1) {
@@ -147,10 +149,13 @@ void ServerImpl::OnRun() {
             std::lock_guard<std::mutex> lock(_clients_mutex);
             if (_clients_counter) {
                 --_clients_counter;
-                _clients.emplace(client_socket, std::thread(&ServerImpl::ConnectionHandler, this, client_socket));
+//                _clients.emplace(client_socket, std::thread(&ServerImpl::ConnectionHandler, this, client_socket));
+                if (!executor.Execute(&ServerImpl::ConnectionHandler, this, client_socket)) {
+                    close(client_socket);
+                    _logger->info("Can't open a connection. Server stopped or too many clients");
+                }
 
             } else {
-
                 close(client_socket);
                 _logger->info("Can't open a connection. Too many clients");
             }
