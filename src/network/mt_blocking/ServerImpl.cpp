@@ -95,7 +95,6 @@ void ServerImpl::Stop() {
 void ServerImpl::Join() {
     assert(_thread.joinable());
     _thread.join();
-    close(_server_socket);
 
     std::unique_lock<std::mutex> lock(_clients_mutex);
     _cv_stop_server.wait(lock, [this]() { return _clients.empty(); });
@@ -145,17 +144,19 @@ void ServerImpl::OnRun() {
         // TODO: Start new thread and process data from/to connection
         {
             std::lock_guard<std::mutex> lock(_clients_mutex);
-            if (_clients_counter) {
+            if (_clients_counter && running.load()) {
                 --_clients_counter;
                 _clients.emplace(client_socket, std::thread(&ServerImpl::ConnectionHandler, this, client_socket));
 
             } else {
 
                 close(client_socket);
-                _logger->info("Can't open a connection. Too many clients");
+                _logger->error("Can't open a connection.");
             }
         }
     }
+
+    close(_server_socket);
 
     // Cleanup on exit...
     _logger->warn("Network stopped");
@@ -247,7 +248,6 @@ void ServerImpl::ConnectionHandler(int client_socket) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
 
-    close(client_socket);
 
     {
         std::lock_guard<std::mutex> lock(_clients_mutex);
@@ -260,9 +260,12 @@ void ServerImpl::ConnectionHandler(int client_socket) {
     argument_for_command.resize(0);
     parser.Reset();
 
+    close(client_socket);
+
     _cv_stop_server.notify_all();
 
     _logger->info("client thread {} stopped", client_socket);
+
 }
 
 } // namespace MTblocking
