@@ -86,9 +86,9 @@ void ServerImpl::Stop() {
     _logger->info("Server shutdown");
 
     std::lock_guard<std::mutex> lock(_clients_mutex);
-    for (auto &client : _clients) {
-        shutdown(client.first, SHUT_RD);
-        _logger->info("client socket {} shutdown", client.first);
+    for (auto client : _clients) {
+        shutdown(client, SHUT_RD);
+        _logger->info("client socket {} shutdown", client);
     }
 }
 
@@ -111,12 +111,15 @@ void ServerImpl::OnRun() {
     // - command_to_execute: last command parsed out of stream
     // - arg_remains: how many bytes to read from stream to get command argument
     // - argument_for_command: buffer stores argument
+
+    Afina::Concurrency::Executor executor(4, 4, 16, std::chrono::milliseconds(10000));
+    executor.Start();
+
     while (running.load()) {
         _logger->debug("waiting for connection...");
 
         // The call to accept() blocks until the incoming connection arrives
         int client_socket;
-        Afina::Concurrency::Executor executor("Clients");
         struct sockaddr client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
         if ((client_socket = accept(_server_socket, (struct sockaddr *)&client_addr, &client_addr_len)) == -1) {
@@ -147,17 +150,13 @@ void ServerImpl::OnRun() {
         // TODO: Start new thread and process data from/to connection
         {
             std::lock_guard<std::mutex> lock(_clients_mutex);
-            if (_clients_counter) {
-                --_clients_counter;
-//                _clients.emplace(client_socket, std::thread(&ServerImpl::ConnectionHandler, this, client_socket));
-                if (!executor.Execute(&ServerImpl::ConnectionHandler, this, client_socket)) {
-                    close(client_socket);
-                    _logger->info("Can't open a connection. Server stopped or too many clients");
-                }
+
+            if (!running.load() || !executor.Execute(&ServerImpl::ConnectionHandler, this, client_socket)) {
+                _logger->info("Can't open a connection.");
+                close(client_socket);
 
             } else {
-                close(client_socket);
-                _logger->info("Can't open a connection. Too many clients");
+                _clients.insert(client_socket);
             }
         }
     }
@@ -256,7 +255,6 @@ void ServerImpl::ConnectionHandler(int client_socket) {
 
     {
         std::lock_guard<std::mutex> lock(_clients_mutex);
-        _clients[client_socket].detach();
         _clients.erase(client_socket);
         ++_clients_counter;
     }

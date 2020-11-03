@@ -30,30 +30,24 @@ class Executor {
     };
 
 public:
-    Executor(std::string name,
-             size_t size = 100,
+    Executor(size_t max_queue_size = 4,
              size_t low_watermark = 4,
              size_t high_watermark = 16,
-             size_t timeout = 5000) :
-    name_(std::move(name)),
-    max_queue_size_(size),
-    state_(State::kRun),
-    idle_time_(timeout),
+             std::chrono::milliseconds idle_time = std::chrono::milliseconds(10000)) :
+    max_queue_size_(max_queue_size),
+    state_(State::kStopped),
+    idle_time_(idle_time),
     low_watermark_(low_watermark),
-    high_watermark_(high_watermark) {
-
-        std::unique_lock<std::mutex> lock(mutex_);
-        queue_size_ = 0;
-        for (size_t i = 0; i < low_watermark_; ++i) {
-//            std::thread new_thread([this](){ perform(this); });
-            threads_.emplace_back(std::thread([this](){ perform(this); }));
-//            new_thread.detach();
-        }
-    }
+    high_watermark_(high_watermark),
+    queue_size_(0),
+    threads_(0),
+    free_threads_(0) {}
 
     ~Executor() {
         Stop(true);
     }
+
+    void Start();
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
@@ -61,16 +55,7 @@ public:
      *
      * In case if await flag is true, call won't return until all background jobs are done and all threads are stopped
      */
-    void Stop(bool await = false) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        state_ = State::kStopping;
-        empty_condition_.notify_all();
-        stop_condition_.wait(lock, [this]() {return tasks_.empty(); });
-        state_ = State::kStopped;
-        if (await) {
-            stop_condition_.wait(lock, [this]() {return threads_.empty(); });
-        }
-    }
+    void Stop(bool await = false);
 
     /**
      * Add function to be executed on the threadpool. Method returns true in case if task has been placed
@@ -90,8 +75,17 @@ public:
 
         // Enqueue new task
         tasks_.push_back(exec);
-        ++queue_size_;
-        empty_condition_.notify_all();
+
+        if (free_threads_ > 0 && queue_size_ - 1 == 0) {
+            empty_condition_.notify_one();
+
+        } else if (threads_ < high_watermark_) {
+            ++threads_;
+            ++free_threads_;
+            std::thread new_thread(&Executor::perform, this);
+            new_thread.detach();
+        }
+
         return true;
     }
 
@@ -105,7 +99,7 @@ private:
     /**
      * Main function that all pool threads are running. It polls internal task queue and execute tasks
      */
-    friend void perform(Executor *executor);
+    void perform();
 
     /**
      * Mutex to protect state below from concurrent modification
@@ -126,7 +120,6 @@ private:
     /**
      * Vector of actual threads that perorm execution
      */
-    std::vector<std::thread> threads_;
 
     /**
      * Task queue
@@ -138,7 +131,8 @@ private:
      */
     State state_;
 
-    std::string name_;
+    size_t threads_;
+    size_t free_threads_;
 
     size_t max_queue_size_;
     size_t queue_size_;
