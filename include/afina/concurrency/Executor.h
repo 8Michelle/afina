@@ -75,15 +75,17 @@ public:
 
         // Enqueue new task
         tasks_.push_back(exec);
+        ++queue_size_;
 
-        if (free_threads_ > 0 && queue_size_ - 1 == 0) {
-            empty_condition_.notify_one();
-
-        } else if (threads_ < high_watermark_) {
+        if (free_threads_ == 0 && threads_ < high_watermark_) {
             ++threads_;
             ++free_threads_;
             std::thread new_thread(&Executor::perform, this);
             new_thread.detach();
+        }
+
+        if (queue_size_ - 1 == 0) {
+            empty_condition_.notify_all();
         }
 
         return true;

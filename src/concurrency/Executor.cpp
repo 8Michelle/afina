@@ -46,7 +46,7 @@ void Executor::Stop(bool await) {
 
 void Executor::perform() {
     std::unique_lock<std::mutex> lock(mutex_);
-
+    std::function<void()> task;
     while (true) {
         if (tasks_.empty()) {
             if (state_ == Executor::State::kStopping ||
@@ -59,7 +59,7 @@ void Executor::perform() {
             }
 
         } else {
-            std::function<void()> task = tasks_.front();
+            task = tasks_.front();
             tasks_.pop_front();
             --free_threads_;
             lock.unlock();
