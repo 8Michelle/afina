@@ -20,18 +20,22 @@ namespace Backend {
 class StripedLockLRU : public Afina::Storage {
 public:
     StripedLockLRU(size_t max_size = 1024, size_t n_shards = 4) : _max_size(max_size) {
-        if (_max_size / n_shards < 8) {
-            throw std::runtime_error("Shards are too small.");
-        } else if (_max_size / n_shards > 1024 * 1024) {
-            throw std::runtime_error("Shards are too large.");
-        }
-
         for (size_t i = 0; i < n_shards; ++i) {
             shards_.emplace_back(new ThreadSafeSimplLRU(_max_size / n_shards));
         }
     }
 
     ~StripedLockLRU() {}
+
+    static StripedLockLRU* create_striped_lock_lru(size_t max_size, size_t n_shards) {
+        if (max_size / n_shards < 8) {
+            throw std::runtime_error("Shards are too small.");
+        } else if (max_size / n_shards > 1024 * 1024) {
+            throw std::runtime_error("Shards are too large.");
+        } else {
+            return new StripedLockLRU(max_size, n_shards);
+        }
+    }
 
     // Implements Afina::Storage interface
     bool Put(const std::string &key, const std::string &value) override;
@@ -50,6 +54,7 @@ public:
 
 private:
     // Shards vector
+
     std::vector<std::unique_ptr<ThreadSafeSimplLRU>> shards_;
 
     // Maximum number of bytes could be stored in this cache.
@@ -59,6 +64,7 @@ private:
     // Function gets the shard number by the node key
     size_t get_shard_num(const std::string& key);
 };
+
 
 } // namespace Backend
 } // namespace Afina

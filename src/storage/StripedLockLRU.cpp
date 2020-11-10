@@ -33,5 +33,6 @@ size_t StripedLockLRU::get_shard_num(const std::string &key) {
     return std::hash<std::string>{}(key) % shards_.size(); // проверить
 }
 
+
 } // namespace Backend
 } // namespace Afina
