@@ -9,6 +9,7 @@
 #include <string>
 #include <thread>
 #include <algorithm>
+#include <chrono>
 
 namespace Afina {
 namespace Concurrency {
@@ -39,7 +40,6 @@ public:
     idle_time_(idle_time),
     low_watermark_(low_watermark),
     high_watermark_(high_watermark),
-    queue_size_(0),
     threads_(0),
     free_threads_(0) {}
 
@@ -47,7 +47,22 @@ public:
         Stop(true);
     }
 
-    void Start();
+    void Start() {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        if (state_ != State::kStopped) {
+            return;
+        }
+
+        for (size_t i = 0; i < low_watermark_; ++i) {
+            std::thread new_thread(&Executor::perform, this);
+            new_thread.detach();
+        }
+
+        threads_ = low_watermark_;
+        free_threads_ = low_watermark_;
+        state_ = State::kRun;
+    }
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
@@ -55,7 +70,27 @@ public:
      *
      * In case if await flag is true, call won't return until all background jobs are done and all threads are stopped
      */
-    void Stop(bool await = false);
+    void Stop(bool await = false) {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        if (state_ == State::kStopped) {
+            return;
+        }
+
+        state_ = State::kStopping;
+        if (threads_ > 0) {
+            empty_condition_.notify_all();
+
+            if (await) {
+                while (state_ != State::kStopped) {
+                    stop_condition_.wait(lock);
+                }
+            }
+
+        } else {
+            state_ = State::kStopped;
+        }
+    }
 
     /**
      * Add function to be executed on the threadpool. Method returns true in case if task has been placed
@@ -69,22 +104,22 @@ public:
         auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
 
         std::unique_lock<std::mutex> lock(this->mutex_);
-        if (state_ != State::kRun || queue_size_ == max_queue_size_) {
+        if (state_ != State::kRun || tasks_.size() == max_queue_size_) {
             return false;
         }
 
         // Enqueue new task
         tasks_.push_back(exec);
-        ++queue_size_;
 
         if (free_threads_ == 0 && threads_ < high_watermark_) {
             ++threads_;
             ++free_threads_;
             std::thread new_thread(&Executor::perform, this);
             new_thread.detach();
+            return true;
         }
 
-        if (queue_size_ - 1 == 0) {
+        if (tasks_.size() - 1 == 0) {
             empty_condition_.notify_all();
         }
 
@@ -101,7 +136,41 @@ private:
     /**
      * Main function that all pool threads are running. It polls internal task queue and execute tasks
      */
-    void perform();
+    void perform() {
+        std::unique_lock<std::mutex> lock(mutex_);
+        std::function<void()> task;
+        auto time_stamp = std::chrono::system_clock::now();
+        while (true) {
+            if (tasks_.empty()) {
+                if (state_ == Executor::State::kStopping ||
+                    (empty_condition_.wait_until(lock, time_stamp + idle_time_) == std::cv_status::timeout &&
+                     threads_ > low_watermark_)) {
+                    break;
+
+                } else {
+                    continue;
+                }
+
+            } else {
+                task = tasks_.front();
+                tasks_.pop_front();
+                --free_threads_;
+                lock.unlock();
+
+                task();
+
+                lock.lock();
+                ++free_threads_;
+                time_stamp = std::chrono::system_clock::now();
+            }
+        }
+
+        if (--threads_ == 0 && state_ == Executor::State::kStopping) {
+            state_ = Executor::State::kStopped;
+            stop_condition_.notify_all();
+        }
+        --free_threads_;
+    }
 
     /**
      * Mutex to protect state below from concurrent modification
@@ -137,7 +206,6 @@ private:
     size_t free_threads_;
 
     size_t max_queue_size_;
-    size_t queue_size_;
 
     std::chrono::milliseconds idle_time_;
 
