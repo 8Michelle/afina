@@ -3,11 +3,15 @@
 
 #include <atomic>
 #include <thread>
+#include <map>
+#include <mutex>
+#include <condition_variable>
+#include <set>
 
 #include <afina/network/Server.h>
 
 namespace spdlog {
-class logger;
+    class logger;
 }
 
 namespace Afina {
@@ -15,9 +19,9 @@ namespace Network {
 namespace MTblocking {
 
 /**
- * # Network resource manager implementation
- * Server that is spawning a separate thread for each connection
- */
+* # Network resource manager implementation
+* Server that is spawning a separate thread for each connection
+*/
 class ServerImpl : public Server {
 public:
     ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl);
@@ -38,6 +42,9 @@ protected:
      */
     void OnRun();
 
+    // Method is running in the connection thread
+    void ConnectionHandler(int client_socket);
+
 private:
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
@@ -49,6 +56,12 @@ private:
 
     // Server socket to accept connections on
     int _server_socket;
+
+    std::set<int> _clients;
+    int _clients_counter;
+    std::mutex _clients_mutex;
+
+    std::condition_variable _cv_stop_server;
 
     // Thread to run network on
     std::thread _thread;
