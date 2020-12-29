@@ -3,6 +3,9 @@
 
 #include <atomic>
 #include <thread>
+#include <map>
+#include <mutex>
+#include <condition_variable>
 
 #include <afina/network/Server.h>
 
@@ -38,6 +41,9 @@ protected:
      */
     void OnRun();
 
+    // Method is running in the connection thread
+    void ConnectionHandler(int client_socket);
+
 private:
     // Logger instance
     std::shared_ptr<spdlog::logger> _logger;
@@ -49,6 +55,13 @@ private:
 
     // Server socket to accept connections on
     int _server_socket;
+
+    // map for client_sockets ans thread objects
+    std::map<int, std::thread> _clients;
+    int _clients_counter;
+    std::mutex _clients_mutex;
+
+    std::condition_variable _cv_stop_server;
 
     // Thread to run network on
     std::thread _thread;
