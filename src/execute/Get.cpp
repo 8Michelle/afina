@@ -1,6 +1,8 @@
 #include <afina/Storage.h>
 #include <afina/execute/Get.h>
 
+#include <unistd.h>
+
 #include <iostream>
 #include <iterator>
 #include <sstream>
@@ -35,6 +37,7 @@ void Get::Execute(Storage &storage, const std::string &args, std::string &out) {
         outStream << "VALUE " << key << " 0 " << value.size() << "\r\n";
         outStream << value << "\r\n";
     }
+//    usleep(1e7); // for shutdown test
     outStream << "END"; // networking layer should add the last \r\n
 
     out = outStream.str();
