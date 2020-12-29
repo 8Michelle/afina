@@ -23,7 +23,6 @@
 
 #include "storage/SimpleLRU.h"
 #include "storage/ThreadSafeSimpleLRU.h"
-#include "storage/StripedLockLRU.h"
 
 using namespace Afina;
 
@@ -56,8 +55,6 @@ public:
             storage = std::make_shared<Afina::Backend::SimpleLRU>();
         } else if (storage_type == "mt_lru") {
             storage = std::make_shared<Afina::Backend::ThreadSafeSimplLRU>();
-        } else if (storage_type == "mt_stl_lru") {
-            storage.reset(Afina::Backend::StripedLockLRU::create_striped_lock_lru(1024, 4));
         } else {
             throw std::runtime_error("Unknown storage type");
         }
