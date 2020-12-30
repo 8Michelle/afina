@@ -1,11 +1,9 @@
 #include "ServerImpl.h"
-
 #include <cassert>
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <stdexcept>
-
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -15,24 +13,24 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-
 #include <spdlog/logger.h>
-
 #include <afina/Storage.h>
 #include <afina/logging/Service.h>
-
-#include "Connection.h"
 #include "Utils.h"
+
 
 namespace Afina {
 namespace Network {
 namespace STnonblock {
 
+
 // See Server.h
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl) {}
 
+
 // See Server.h
 ServerImpl::~ServerImpl() {}
+
 
 // See Server.h
 void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) {
@@ -83,21 +81,26 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
     _work_thread = std::thread(&ServerImpl::OnRun, this);
 }
 
+
 // See Server.h
 void ServerImpl::Stop() {
     _logger->warn("Stop network service");
-
+    for (auto connection : _connections){
+        shutdown(connection->_socket, SHUT_WR);
+    }
     // Wakeup threads that are sleep on epoll_wait
     if (eventfd_write(_event_fd, 1)) {
         throw std::runtime_error("Failed to wakeup workers");
     }
 }
 
+
 // See Server.h
 void ServerImpl::Join() {
     // Wait for work to be complete
     _work_thread.join();
 }
+
 
 // See ServerImpl.h
 void ServerImpl::OnRun() {
@@ -122,7 +125,7 @@ void ServerImpl::OnRun() {
     }
 
     bool run = true;
-    std::array<struct epoll_event, 64> mod_list;
+    std::array<struct epoll_event, 64 > mod_list;
     while (run) {
         int nmod = epoll_wait(epoll_descr, &mod_list[0], mod_list.size(), -1);
         _logger->debug("Acceptor wokeup: {} events", nmod);
@@ -134,12 +137,13 @@ void ServerImpl::OnRun() {
                 run = false;
                 continue;
             } else if (current_event.data.fd == _server_socket) {
-                OnNewConnection(epoll_descr);
+                ConnectionHandler(epoll_descr);
                 continue;
             }
 
             // That is some connection!
             Connection *pc = static_cast<Connection *>(current_event.data.ptr);
+            _connections.insert(pc);
 
             auto old_mask = pc->_event.events;
             if ((current_event.events & EPOLLERR) || (current_event.events & EPOLLHUP)) {
@@ -158,31 +162,42 @@ void ServerImpl::OnRun() {
 
             // Does it alive?
             if (!pc->isAlive()) {
+
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_DEL, pc->_socket, &pc->_event)) {
                     _logger->error("Failed to delete connection from epoll");
                 }
 
+                _connections.erase(pc);
                 close(pc->_socket);
                 pc->OnClose();
-
                 delete pc;
+
             } else if (pc->_event.events != old_mask) {
+
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_MOD, pc->_socket, &pc->_event)) {
                     _logger->error("Failed to change connection event mask");
-
+                    _connections.erase(pc);
                     close(pc->_socket);
                     pc->OnClose();
-
                     delete pc;
                 }
             }
         }
     }
+    
+    for (auto connection : _connections){
+        close(connection->_socket);
+        connection->OnClose();
+        delete connection;
+    }
+    
+    _connections.clear();
     _logger->warn("Acceptor stopped");
 }
 
-void ServerImpl::OnNewConnection(int epoll_descr) {
-    for (;;) {
+
+void ServerImpl::ConnectionHandler(int epoll_descr) {
+    while (true) {
         struct sockaddr in_addr;
         socklen_t in_len;
 
@@ -201,13 +216,13 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         // Print host and service info.
         char hbuf[NI_MAXHOST], sbuf[NI_MAXSERV];
         int retval =
-            getnameinfo(&in_addr, in_len, hbuf, sizeof hbuf, sbuf, sizeof sbuf, NI_NUMERICHOST | NI_NUMERICSERV);
+                getnameinfo(&in_addr, in_len, hbuf, sizeof hbuf, sbuf, sizeof sbuf, NI_NUMERICHOST | NI_NUMERICSERV);
         if (retval == 0) {
             _logger->info("Accepted connection on descriptor {} (host={}, port={})\n", infd, hbuf, sbuf);
         }
 
         // Register the new FD to be monitored by epoll.
-        Connection *pc = new(std::nothrow) Connection(infd);
+        Connection *pc = new (std::nothrow) Connection(infd, _logger, pStorage);
         if (pc == nullptr) {
             throw std::runtime_error("Failed to allocate connection");
         }
@@ -222,6 +237,7 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         }
     }
 }
+
 
 } // namespace STnonblock
 } // namespace Network

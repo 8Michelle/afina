@@ -3,11 +3,14 @@
 
 #include <thread>
 #include <vector>
+#include <set>
+
+#include "Connection.h"
 
 #include <afina/network/Server.h>
 
 namespace spdlog {
-class logger;
+    class logger;
 }
 
 namespace Afina {
@@ -18,9 +21,9 @@ namespace STnonblock {
 class Worker;
 
 /**
- * # Network resource manager implementation
- * Epoll based server
- */
+* # Network resource manager implementation
+* Epoll based server
+*/
 class ServerImpl : public Server {
 public:
     ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl);
@@ -37,7 +40,7 @@ public:
 
 protected:
     void OnRun();
-    void OnNewConnection(int);
+    void ConnectionHandler(int epoll_descr);
 
 private:
     // logger to use
@@ -56,6 +59,8 @@ private:
 
     // IO thread
     std::thread _work_thread;
+
+    std::set<Connection*> _connections;
 };
 
 } // namespace STnonblock
