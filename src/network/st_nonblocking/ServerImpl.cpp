@@ -143,7 +143,6 @@ void ServerImpl::OnRun() {
 
             // That is some connection!
             Connection *pc = static_cast<Connection *>(current_event.data.ptr);
-            _connections.insert(pc);
 
             auto old_mask = pc->_event.events;
             if ((current_event.events & EPOLLERR) || (current_event.events & EPOLLHUP)) {
@@ -234,6 +233,8 @@ void ServerImpl::ConnectionHandler(int epoll_descr) {
                 pc->OnError();
                 delete pc;
             }
+        } else {
+            _connections.insert(pc);
         }
     }
 }
