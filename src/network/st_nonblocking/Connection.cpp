@@ -32,7 +32,7 @@ void Connection::OnClose() {
 // See Connection.h
 void Connection::DoRead() {
     if (_queue.size() > _max_queue_size){
-        _event.events = ~EPOLLIN;
+        _event.events &= ~EPOLLIN;
     }
 
     try {
@@ -148,7 +148,7 @@ void Connection::DoWrite() {
         }
 
         if (_queue.size() <= _max_queue_size){
-            _event.events &= EPOLLIN;
+            _event.events |= EPOLLIN;
         }
 
     } catch (std::runtime_error &ex) {
