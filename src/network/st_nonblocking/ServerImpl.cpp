@@ -21,7 +21,7 @@
 #include <afina/Storage.h>
 #include <afina/logging/Service.h>
 
-#include "Connection.h"
+//#include "Connection.h"
 #include "Utils.h"
 
 namespace Afina {
@@ -85,6 +85,10 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
 
 // See Server.h
 void ServerImpl::Stop() {
+    for (auto connection : _connections) {
+        shutdown(connection->_socket, SHUT_WR);
+    }
+
     _logger->warn("Stop network service");
 
     // Wakeup threads that are sleep on epoll_wait
@@ -162,6 +166,7 @@ void ServerImpl::OnRun() {
                     _logger->error("Failed to delete connection from epoll");
                 }
 
+                _connections.erase(pc);
                 close(pc->_socket);
                 pc->OnClose();
 
@@ -170,6 +175,7 @@ void ServerImpl::OnRun() {
                 if (epoll_ctl(epoll_descr, EPOLL_CTL_MOD, pc->_socket, &pc->_event)) {
                     _logger->error("Failed to change connection event mask");
 
+                    _connections.erase(pc);
                     close(pc->_socket);
                     pc->OnClose();
 
@@ -178,6 +184,13 @@ void ServerImpl::OnRun() {
             }
         }
     }
+
+    for (auto connection : _connections) {
+        close(connection->_socket);
+        connection->OnClose();
+        delete connection;
+    }
+
     _logger->warn("Acceptor stopped");
 }
 
@@ -207,7 +220,7 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         }
 
         // Register the new FD to be monitored by epoll.
-        Connection *pc = new(std::nothrow) Connection(infd);
+        Connection *pc = new(std::nothrow) Connection(infd, _logger, pStorage);
         if (pc == nullptr) {
             throw std::runtime_error("Failed to allocate connection");
         }
@@ -218,6 +231,8 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
             if (epoll_ctl(epoll_descr, EPOLL_CTL_ADD, pc->_socket, &pc->_event)) {
                 pc->OnError();
                 delete pc;
+            } else {
+                _connections.insert(pc);
             }
         }
     }
