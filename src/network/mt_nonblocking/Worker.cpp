@@ -47,12 +47,12 @@ Worker &Worker::operator=(Worker &&other) {
 }
 
 // See Worker.h
-void Worker::Start(int epoll_fd) {
+void Worker::Start(int epoll_fd, ServerImpl* server) {
     if (isRunning.exchange(true) == false) {
         assert(_epoll_fd == -1);
         _epoll_fd = epoll_fd;
         _logger = _pLogging->select("network.worker");
-        _thread = std::thread(&Worker::OnRun, this);
+        _thread = std::thread(&Worker::OnRun, this, server);
     }
 }
 
@@ -66,7 +66,7 @@ void Worker::Join() {
 }
 
 // See Worker.h
-void Worker::OnRun() {
+void Worker::OnRun(ServerImpl* server) {
     assert(_epoll_fd >= 0);
     _logger->trace("OnRun");
 
@@ -125,11 +125,22 @@ void Worker::OnRun() {
                 if (epoll_ctl(_epoll_fd, EPOLL_CTL_DEL, pconn->_socket, &pconn->_event)) {
                     std::cerr << "Failed to delete connection!" << std::endl;
                 }
+
+                close(pconn->_socket);
+                server->erase_connection(pconn);
+
                 delete pconn;
             }
         }
         // TODO: Select timeout...
     }
+
+    if (server->get_workers_count() == 1) {
+        server->erase_all_connections();
+    }
+
+    server->decrement_workers_counter();
+
     _logger->warn("Worker stopped");
 }
 

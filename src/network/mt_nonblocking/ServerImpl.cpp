@@ -33,7 +33,10 @@ namespace MTnonblock {
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl) : Server(ps, pl) {}
 
 // See Server.h
-ServerImpl::~ServerImpl() {}
+ServerImpl::~ServerImpl() {
+    Stop();
+    Join();
+}
 
 // See Server.h
 void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) {
@@ -97,7 +100,8 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
     _workers.reserve(n_workers);
     for (int i = 0; i < n_workers; i++) {
         _workers.emplace_back(pStorage, pLogging);
-        _workers.back().Start(_data_epoll_fd);
+        _workers.back().Start(_data_epoll_fd, this);
+        ++_workers_counter;
     }
 
     // Start acceptors
@@ -110,6 +114,14 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
 // See Server.h
 void ServerImpl::Stop() {
     _logger->warn("Stop network service");
+
+    {
+        std::lock_guard<std::mutex> lock(_mutex);
+        for (auto connection : _connections) {
+            shutdown(connection->_socket, SHUT_RD);
+        }
+    }
+
     // Said workers to stop
     for (auto &w : _workers) {
         w.Stop();
@@ -130,6 +142,8 @@ void ServerImpl::Join() {
     for (auto &w : _workers) {
         w.Join();
     }
+    _acceptors.clear();
+    _workers.clear();
 }
 
 // See ServerImpl.h
@@ -193,7 +207,7 @@ void ServerImpl::OnRun() {
                 }
 
                 // Register the new FD to be monitored by epoll.
-                Connection *pc = new Connection(infd);
+                Connection *pc = new Connection(infd, _logger, pStorage);
                 if (pc == nullptr) {
                     throw std::runtime_error("Failed to allocate connection");
                 }
@@ -205,14 +219,41 @@ void ServerImpl::OnRun() {
                     int epoll_ctl_retval;
                     if ((epoll_ctl_retval = epoll_ctl(_data_epoll_fd, EPOLL_CTL_ADD, pc->_socket, &pc->_event))) {
                         _logger->debug("epoll_ctl failed during connection register in workers'epoll: error {}", epoll_ctl_retval);
+                        close(pc->_socket);
                         pc->OnError();
                         delete pc;
+                    } else {
+                        std::lock_guard<std::mutex> lock(_mutex);
+                        _connections.insert(pc);
                     }
                 }
             }
         }
     }
     _logger->warn("Acceptor stopped");
+}
+
+int ServerImpl::get_workers_count() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _workers_counter;
+}
+
+void ServerImpl::erase_connection(Connection *connection) {
+    std::lock_guard<std::mutex> lock(_mutex);
+    _connections.erase(connection);
+}
+
+void ServerImpl::decrement_workers_counter() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    --_workers_counter;
+}
+
+void ServerImpl::erase_all_connections() {
+    std::lock_guard<std::mutex> lock(_mutex);
+    for (auto connection : _connections) {
+        close(connection->_socket);
+        delete connection;
+    }
 }
 
 } // namespace MTnonblock
